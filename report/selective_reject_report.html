@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Selective Reject Report</title>
+	<style>
+		body {
+			font-family: Arial, sans-serif;
+			margin: 0;
+			background: #f5f7fb;
+			color: #1f2933;
+		}
+
+		header {
+			background: #1f2933;
+			color: white;
+			padding: 24px 32px;
+		}
+
+		main {
+			max-width: 980px;
+			margin: 0 auto;
+			padding: 24px;
+		}
+
+		section {
+			background: white;
+			border: 1px solid #d8dee9;
+			border-radius: 6px;
+			margin-bottom: 18px;
+			padding: 18px 22px;
+		}
+
+		h1, h2 {
+			margin-top: 0;
+		}
+
+		code {
+			background: #eef2f7;
+			border-radius: 4px;
+			padding: 2px 5px;
+		}
+
+		table {
+			border-collapse: collapse;
+			width: 100%;
+		}
+
+		th, td {
+			border-bottom: 1px solid #d8dee9;
+			padding: 9px;
+			text-align: left;
+			vertical-align: top;
+		}
+
+		th {
+			background: #eef2f7;
+		}
+
+		.good {
+			color: #126b3a;
+			font-weight: bold;
+		}
+
+		.warn {
+			color: #9a5b00;
+			font-weight: bold;
+		}
+	</style>
+</head>
+<body>
+	<header>
+		<h1>Selective Reject Assignment Report</h1>
+		<p>Report date: May 20, 2026</p>
+	</header>
+
+	<main>
+		<section>
+			<h2>Short Summary</h2>
+			<p>
+				The program in <code>udpCode_spring26_v3</code> was changed into a
+				selective reject UDP file upload. In this version, <code>rcopy</code>
+				sends the file and <code>server</code> receives the file.
+			</p>
+			<p>
+				The optional flag 1 and flag 2 packets were not used.
+			</p>
+		</section>
+
+		<section>
+			<h2>Files Changed</h2>
+			<table>
+				<tr>
+					<th>File</th>
+					<th>What changed</th>
+				</tr>
+				<tr>
+					<td><code>udpCode_spring26_v3/rcopy.c</code></td>
+					<td>
+						Added the sender state machine. It sends filename, sends data
+						with a sender Window, handles RR and reject packets, sends EOF,
+						and sends final DONE.
+					</td>
+				</tr>
+				<tr>
+					<td><code>udpCode_spring26_v3/server.c</code></td>
+					<td>
+						Added the receiver state machine. It forks a child per client,
+						opens the output file, stores out-of-order packets in a Buffer,
+						sends RR or reject packets, and handles EOF.
+					</td>
+				</tr>
+				<tr>
+					<td><code>udpCode_spring26_v3/Packet.h</code> and <code>Packet.c</code></td>
+					<td>
+						Created simple packet functions for the 7 byte header, checksum,
+						flags, sequence numbers, and 32 bit network order fields.
+					</td>
+				</tr>
+				<tr>
+					<td><code>udpCode_spring26_v3/Window.h</code> and <code>Window.c</code></td>
+					<td>
+						Created the sender Window. It has <code>lower</code>,
+						<code>current</code>, and <code>upper</code>. The
+						<code>current</code> value is the next packet to send and moves
+						forward right after a data packet is sent.
+					</td>
+				</tr>
+				<tr>
+					<td><code>udpCode_spring26_v3/Buffer.h</code> and <code>Buffer.c</code></td>
+					<td>
+						Created the receiver Buffer. It stores out-of-order packets,
+						writes ready packets in order, and tracks the missing packet to
+						request.
+					</td>
+				</tr>
+			</table>
+		</section>
+
+		<section>
+			<h2>Created And Deleted</h2>
+			<p class="good">Created:</p>
+			<ul>
+				<li><code>udpCode_spring26_v3/Packet.h</code></li>
+				<li><code>udpCode_spring26_v3/Packet.c</code></li>
+				<li><code>udpCode_spring26_v3/Window.h</code></li>
+				<li><code>udpCode_spring26_v3/Window.c</code></li>
+				<li><code>udpCode_spring26_v3/Buffer.h</code></li>
+				<li><code>udpCode_spring26_v3/Buffer.c</code></li>
+				<li><code>report/selective_reject_report.html</code></li>
+			</ul>
+			<p class="warn">Deleted by rename:</p>
+			<ul>
+				<li><code>udpCode_spring26_v3/srej_packet.h</code></li>
+				<li><code>udpCode_spring26_v3/srej_packet.c</code></li>
+				<li><code>udpCode_spring26_v3/srej_window.h</code></li>
+				<li><code>udpCode_spring26_v3/srej_window.c</code></li>
+				<li><code>udpCode_spring26_v3/srej_buffer.h</code></li>
+				<li><code>udpCode_spring26_v3/srej_buffer.c</code></li>
+			</ul>
+		</section>
+
+		<section>
+			<h2>Assignment Rules Followed</h2>
+			<ul>
+				<li>Used UDP and the provided safe send/receive calls that build on <code>sendtoErr</code> and <code>recvfromErr</code>.</li>
+				<li>Used a 7 byte packet header: sequence number, checksum, and flag.</li>
+				<li>Limited data packets to 1400 bytes of payload.</li>
+				<li>Used flag 3 for data, flag 5 for RR, flag 6 for reject, flag 7 for filename setup, and flag 8 for filename response.</li>
+				<li>Used extra flags 32, 33, and 34 for EOF, EOF ACK, and final DONE.</li>
+				<li>Used <code>pollCall</code> before receive calls in the client and child receiver loop.</li>
+				<li>Used the required command line format for <code>rcopy</code> and <code>server</code>.</li>
+				<li>Kept comments simple and tied to what each function does.</li>
+				<li>Removed comments that sounded like outside explanation instead of student code.</li>
+			</ul>
+		</section>
+
+		<section>
+			<h2>Not Followed Or Limited</h2>
+			<ul>
+				<li>Flag 1 and flag 2 were not used because they are optional and the instruction said not to use them.</li>
+				<li>The Makefile was not modified. The new helper code is included from <code>rcopy.c</code> and <code>server.c</code> so the existing build file can stay unchanged.</li>
+				<li>The sender Window is in <code>rcopy</code> because this upload version has <code>rcopy</code> sending data. The server uses the receive Buffer.</li>
+				<li>The build could not finish on this machine because <code>gcc</code> is not installed and no WSL distro is available.</li>
+			</ul>
+		</section>
+
+		<section>
+			<h2>Git Commits</h2>
+			<table>
+				<tr>
+					<th>Commit</th>
+					<th>Message</th>
+				</tr>
+				<tr>
+					<td><code>2e7fd6d</code></td>
+					<td>Add SREJ helper libraries</td>
+				</tr>
+				<tr>
+					<td><code>fb88399</code></td>
+					<td>Implement SREJ rcopy sender</td>
+				</tr>
+				<tr>
+					<td><code>a094661</code></td>
+					<td>Refactor Window Buffer Packet names</td>
+				</tr>
+			</table>
+		</section>
+
+		<section>
+			<h2>Build Check</h2>
+			<p>
+				Command tried: <code>make</code> inside
+				<code>udpCode_spring26_v3</code>.
+			</p>
+			<p class="warn">
+				Result: failed before compiling because Windows could not find
+				<code>gcc</code>.
+			</p>
+			<p>
+				The dry run command <code>make -n</code> showed the expected compile
+				commands for <code>rcopy</code> and <code>server</code>.
+			</p>
+		</section>
+	</main>
+</body>
+</html>
