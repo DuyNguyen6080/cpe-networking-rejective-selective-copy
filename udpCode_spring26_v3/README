@@ -1,0 +1,10 @@
+Name: Duy Nguyen
+Lab section: 3pm
+
+--How to run --
+compile:
+    make
+run server:
+    ./server [error-rate] [optional port]
+run client:
+    ./rcopy [error rate] localhost [port number]
