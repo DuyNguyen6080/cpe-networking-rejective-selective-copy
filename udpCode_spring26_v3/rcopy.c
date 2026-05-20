@@ -15,15 +15,11 @@
 #include "networks.h"
 #include "safeUtil.h"
 #include "pollLib.h"
-#include "srej_packet.h"
-#include "srej_window.h"
+#include "Packet.h"
+#include "Window.h"
 
-/*
- * These .c files are included because the assignment says do not change
- * the Makefile, but the window and packet code still need to be separate.
- */
-#include "srej_packet.c"
-#include "srej_window.c"
+#include "Packet.c"
+#include "Window.c"
 
 #define MAX_TRIES 10
 #define FIRST_SEQ 1
@@ -48,9 +44,9 @@ typedef struct RcopyInfo
 	int buffer_size;
 	int file_done;
 	int retry_count;
-	uint32_t next_seq;
+	uint32_t control_seq;
 	struct sockaddr_in6 server;
-	SenderWindow window;
+	Window window;
 } RcopyInfo;
 
 void process_file(char **argv);
@@ -65,8 +61,8 @@ int open_input_file(char *file_name);
 int send_filename_packet(char *out_name, RcopyInfo *info);
 int process_controls(RcopyInfo *info, int wait_time);
 void handle_rr(RcopyInfo *info, uint8_t *packet, int packet_len);
-void handle_srej(RcopyInfo *info, uint8_t *packet, int packet_len);
-void resend_packet(RcopyInfo *info, SenderWindowEntry *entry);
+void handle_reject(RcopyInfo *info, uint8_t *packet, int packet_len);
+void resend_packet(RcopyInfo *info, WindowEntry *entry);
 void send_final_done(RcopyInfo *info);
 
 /* This function starts rcopy after checking the command line. */
@@ -132,7 +128,7 @@ void process_file(char **argv)
 		close(info.socket_num);
 	}
 
-	sender_window_free(&info.window);
+	window_free(&info.window);
 }
 
 /* This function opens the file, socket, poll set, and window. */
@@ -146,7 +142,7 @@ STATE start_state(char **argv, RcopyInfo *info)
 	info->socket_num = setupUdpClientToServer(&info->server,
 			argv[6], port_number);
 	info->server.sin6_port = htons(port_number);
-	info->next_seq = FIRST_SEQ;
+	info->control_seq = FIRST_SEQ;
 
 	setupPollSet();
 	addToPollSet(info->socket_num);
@@ -159,8 +155,8 @@ STATE filename_state(char **argv, RcopyInfo *info)
 {
 	if (send_filename_packet(argv[2], info) == 1)
 	{
-		sender_window_init(&info->window, info->window_size,
-				info->next_seq);
+		window_init(&info->window, info->window_size,
+				info->control_seq);
 		return SEND_DATA;
 	}
 
@@ -174,8 +170,9 @@ STATE send_data_state(RcopyInfo *info)
 	uint8_t packet[SREJ_MAX_PACKET];
 	int data_len = 0;
 	int packet_len = 0;
+	uint32_t send_seq = 0;
 
-	while (sender_window_open(&info->window) == 1 &&
+	while (window_open(&info->window) == 1 &&
 			info->file_done == 0)
 	{
 		data_len = read(info->input_file, data, info->buffer_size);
@@ -192,22 +189,21 @@ STATE send_data_state(RcopyInfo *info)
 			break;
 		}
 
-		packet_len = srej_make_packet(packet, info->next_seq,
+		send_seq = info->window.current;
+		packet_len = make_packet(packet, send_seq,
 				FLAG_DATA, data, data_len);
 
 		safeSendto(info->socket_num, packet, packet_len, 0,
 				(struct sockaddr *) &info->server,
 				sizeof(info->server));
 
-		sender_window_add(&info->window, info->next_seq,
-				packet, packet_len);
+		window_add(&info->window, send_seq, packet, packet_len);
 
-		info->next_seq++;
 		info->retry_count = 0;
 		process_controls(info, POLL_NOW);
 	}
 
-	if (info->file_done == 1 && sender_window_empty(&info->window) == 1)
+	if (info->file_done == 1 && window_empty(&info->window) == 1)
 	{
 		return SEND_EOF;
 	}
@@ -218,7 +214,7 @@ STATE send_data_state(RcopyInfo *info)
 /* This function waits when the window is closed or draining. */
 STATE wait_on_ack_state(RcopyInfo *info)
 {
-	SenderWindowEntry *entry = NULL;
+	WindowEntry *entry = NULL;
 	int got_control = process_controls(info, POLL_ONE_SEC);
 
 	if (got_control > 0)
@@ -227,7 +223,7 @@ STATE wait_on_ack_state(RcopyInfo *info)
 		return SEND_DATA;
 	}
 
-	entry = sender_window_lowest(&info->window);
+	entry = window_lowest(&info->window);
 
 	if (entry == NULL)
 	{
@@ -255,7 +251,7 @@ STATE send_eof_state(RcopyInfo *info)
 	int addr_len = sizeof(info->server);
 	int tries = 0;
 
-	packet_len = srej_make_packet(packet, info->next_seq,
+	packet_len = make_packet(packet, info->window.current,
 			FLAG_EOF, NULL, 0);
 
 	while (tries < MAX_TRIES)
@@ -272,8 +268,8 @@ STATE send_eof_state(RcopyInfo *info)
 					(struct sockaddr *) &info->server,
 					&addr_len);
 
-			if (srej_check_packet(in_packet, in_len) == 1 &&
-					srej_get_flag(in_packet) == FLAG_EOF_ACK)
+			if (check_packet(in_packet, in_len) == 1 &&
+					get_flag(in_packet) == FLAG_EOF_ACK)
 			{
 				send_final_done(info);
 				return DONE;
@@ -358,11 +354,11 @@ int send_filename_packet(char *out_name, RcopyInfo *info)
 	int addr_len = sizeof(info->server);
 	int tries = 0;
 
-	srej_write_u32(payload, info->window_size);
-	srej_write_u32(payload + 4, info->buffer_size);
+	write_u32(payload, info->window_size);
+	write_u32(payload + 4, info->buffer_size);
 	memcpy(payload + 8, out_name, name_len);
 
-	packet_len = srej_make_packet(packet, info->next_seq,
+	packet_len = make_packet(packet, info->control_seq,
 			FLAG_FILENAME, payload, name_len + 8);
 
 	while (tries < MAX_TRIES)
@@ -379,8 +375,8 @@ int send_filename_packet(char *out_name, RcopyInfo *info)
 					(struct sockaddr *) &info->server,
 					&addr_len);
 
-			if (srej_check_packet(in_packet, in_len) == 1 &&
-					srej_get_flag(in_packet) == FLAG_FILENAME_RESP)
+			if (check_packet(in_packet, in_len) == 1 &&
+					get_flag(in_packet) == FLAG_FILENAME_RESP)
 			{
 				if (in_len < SREJ_HEADER_LEN + 1 ||
 						in_packet[SREJ_HEADER_LEN] != 0)
@@ -390,7 +386,7 @@ int send_filename_packet(char *out_name, RcopyInfo *info)
 					return 0;
 				}
 
-				info->next_seq++;
+				info->control_seq++;
 				return 1;
 			}
 		}
@@ -401,7 +397,7 @@ int send_filename_packet(char *out_name, RcopyInfo *info)
 	return 0;
 }
 
-/* This function receives and handles all ready RR/SREJ packets. */
+/* This function receives and handles all ready control packets. */
 int process_controls(RcopyInfo *info, int wait_time)
 {
 	uint8_t packet[SREJ_MAX_PACKET];
@@ -418,16 +414,16 @@ int process_controls(RcopyInfo *info, int wait_time)
 				(struct sockaddr *) &info->server,
 				&addr_len);
 
-		if (srej_check_packet(packet, packet_len) == 1)
+		if (check_packet(packet, packet_len) == 1)
 		{
-			if (srej_get_flag(packet) == FLAG_RR)
+			if (get_flag(packet) == FLAG_RR)
 			{
 				handle_rr(info, packet, packet_len);
 				count++;
 			}
-			else if (srej_get_flag(packet) == FLAG_SREJ)
+			else if (get_flag(packet) == FLAG_SREJ)
 			{
-				handle_srej(info, packet, packet_len);
+				handle_reject(info, packet, packet_len);
 				count++;
 			}
 		}
@@ -448,23 +444,23 @@ void handle_rr(RcopyInfo *info, uint8_t *packet, int packet_len)
 		return;
 	}
 
-	rr_seq = srej_read_u32(packet + SREJ_HEADER_LEN);
-	sender_window_rr(&info->window, rr_seq);
+	rr_seq = read_u32(packet + SREJ_HEADER_LEN);
+	window_rr(&info->window, rr_seq);
 }
 
-/* This function handles one SREJ packet. */
-void handle_srej(RcopyInfo *info, uint8_t *packet, int packet_len)
+/* This function handles one reject packet. */
+void handle_reject(RcopyInfo *info, uint8_t *packet, int packet_len)
 {
-	uint32_t srej_seq = 0;
-	SenderWindowEntry *entry = NULL;
+	uint32_t missing_seq = 0;
+	WindowEntry *entry = NULL;
 
 	if (packet_len < SREJ_HEADER_LEN + 4)
 	{
 		return;
 	}
 
-	srej_seq = srej_read_u32(packet + SREJ_HEADER_LEN);
-	entry = sender_window_find(&info->window, srej_seq);
+	missing_seq = read_u32(packet + SREJ_HEADER_LEN);
+	entry = window_find(&info->window, missing_seq);
 
 	if (entry != NULL)
 	{
@@ -473,7 +469,7 @@ void handle_srej(RcopyInfo *info, uint8_t *packet, int packet_len)
 }
 
 /* This function resends one packet from the sender window. */
-void resend_packet(RcopyInfo *info, SenderWindowEntry *entry)
+void resend_packet(RcopyInfo *info, WindowEntry *entry)
 {
 	safeSendto(info->socket_num, entry->packet, entry->packet_len, 0,
 			(struct sockaddr *) &info->server,
@@ -486,7 +482,7 @@ void send_final_done(RcopyInfo *info)
 	uint8_t packet[SREJ_MAX_PACKET];
 	int packet_len = 0;
 
-	packet_len = srej_make_packet(packet, info->next_seq + 1,
+	packet_len = make_packet(packet, info->window.current + 1,
 			FLAG_DONE, NULL, 0);
 
 	safeSendto(info->socket_num, packet, packet_len, 0,

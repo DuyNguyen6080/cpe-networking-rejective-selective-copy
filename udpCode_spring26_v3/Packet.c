@@ -2,10 +2,10 @@
 #include <string.h>
 
 #include "cpe464.h"
-#include "srej_packet.h"
+#include "Packet.h"
 
 /* This function writes one unsigned int in network order. */
-void srej_write_u32(uint8_t *place, uint32_t value)
+void write_u32(uint8_t *place, uint32_t value)
 {
 	uint32_t net_value = htonl(value);
 
@@ -13,7 +13,7 @@ void srej_write_u32(uint8_t *place, uint32_t value)
 }
 
 /* This function reads one unsigned int from network order. */
-uint32_t srej_read_u32(uint8_t *place)
+uint32_t read_u32(uint8_t *place)
 {
 	uint32_t net_value = 0;
 
@@ -22,13 +22,13 @@ uint32_t srej_read_u32(uint8_t *place)
 }
 
 /* This function builds one packet with our 7 byte header. */
-int srej_make_packet(uint8_t *packet, uint32_t seq, uint8_t flag,
+int make_packet(uint8_t *packet, uint32_t seq, uint8_t flag,
 		uint8_t *data, int data_len)
 {
 	unsigned short checksum = 0;
 	int packet_len = SREJ_HEADER_LEN + data_len;
 
-	srej_write_u32(packet, seq);
+	write_u32(packet, seq);
 	packet[4] = 0;
 	packet[5] = 0;
 	packet[6] = flag;
@@ -45,7 +45,7 @@ int srej_make_packet(uint8_t *packet, uint32_t seq, uint8_t flag,
 }
 
 /* This function returns 1 when the checksum is correct. */
-int srej_check_packet(uint8_t *packet, int packet_len)
+int check_packet(uint8_t *packet, int packet_len)
 {
 	if (packet_len < SREJ_HEADER_LEN)
 	{
@@ -61,13 +61,13 @@ int srej_check_packet(uint8_t *packet, int packet_len)
 }
 
 /* This function gets the packet sequence number from the header. */
-uint32_t srej_get_seq(uint8_t *packet)
+uint32_t get_seq(uint8_t *packet)
 {
-	return srej_read_u32(packet);
+	return read_u32(packet);
 }
 
 /* This function gets the flag byte from the header. */
-uint8_t srej_get_flag(uint8_t *packet)
+uint8_t get_flag(uint8_t *packet)
 {
 	return packet[6];
 }

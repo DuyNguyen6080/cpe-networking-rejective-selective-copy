@@ -1,5 +1,5 @@
-#ifndef SREJ_PACKET_H
-#define SREJ_PACKET_H
+#ifndef PACKET_H
+#define PACKET_H
 
 #include <stdint.h>
 
@@ -17,12 +17,12 @@
 #define FLAG_EOF_ACK 33
 #define FLAG_DONE 34
 
-int srej_make_packet(uint8_t *packet, uint32_t seq, uint8_t flag,
+int make_packet(uint8_t *packet, uint32_t seq, uint8_t flag,
         uint8_t *data, int data_len);
-int srej_check_packet(uint8_t *packet, int packet_len);
-uint32_t srej_get_seq(uint8_t *packet);
-uint8_t srej_get_flag(uint8_t *packet);
-void srej_write_u32(uint8_t *place, uint32_t value);
-uint32_t srej_read_u32(uint8_t *place);
+int check_packet(uint8_t *packet, int packet_len);
+uint32_t get_seq(uint8_t *packet);
+uint8_t get_flag(uint8_t *packet);
+void write_u32(uint8_t *place, uint32_t value);
+uint32_t read_u32(uint8_t *place);
 
 #endif
