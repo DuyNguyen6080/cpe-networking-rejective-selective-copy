@@ -268,7 +268,7 @@ STATE wait_on_done_state(ServerInfo *info)
 	{
 		info->retry_count++;
 
-		if (info->retry_count > MAX_TRIES)
+		if (info->retry_count >= MAX_TRIES)
 		{
 			return DONE;
 		}

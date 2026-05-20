@@ -232,7 +232,7 @@ STATE wait_on_ack_state(RcopyInfo *info)
 
 	info->retry_count++;
 
-	if (info->retry_count > MAX_TRIES)
+	if (info->retry_count >= MAX_TRIES)
 	{
 		return DONE;
 	}
