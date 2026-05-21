@@ -83,6 +83,9 @@ int main(int argc, char *argv[])
 
 	sendtoErr_init(error_rate, DROP_ON, FLIP_ON, DEBUG_OFF, RSEED_ON);
 
+	printf("server: start error rate %.3f port %d\n",
+			error_rate, port_number);
+
 	socket_num = udpServerSetup(port_number);
 	process_server(socket_num, error_rate);
 
@@ -101,6 +104,8 @@ void process_server(int socket_num, double error_rate)
 
 	signal(SIGCHLD, handle_zombies);
 
+	printf("server: waiting for filename packets\n");
+
 	while (1)
 	{
 		client_len = sizeof(client);
@@ -110,6 +115,7 @@ void process_server(int socket_num, double error_rate)
 		if (check_packet(packet, packet_len) == 1 &&
 				get_flag(packet) == FLAG_FILENAME)
 		{
+			printf("server: got filename packet\n");
 			pid = fork();
 
 			if (pid < 0)
@@ -120,6 +126,7 @@ void process_server(int socket_num, double error_rate)
 
 			if (pid == 0)
 			{
+				printf("server: child starts\n");
 				process_client(socket_num, packet, packet_len,
 						&client, error_rate);
 				exit(0);
@@ -206,14 +213,20 @@ STATE filename_state(ServerInfo *info)
 	info->window_size = read_u32(payload);
 	info->buffer_size = read_u32(payload + 4);
 
+	printf("server: filename state file %s\n", file_name);
+	printf("server: receiver window %d buffer %d\n",
+			info->window_size, info->buffer_size);
+
 	info->output_file = open(file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 
 	if (info->output_file < 0)
 	{
+		printf("server: output file open failed\n");
 		send_filename_response(info, 1);
 		return DONE;
 	}
 
+	printf("server: output file open ok\n");
 	send_filename_response(info, 0);
 	buffer_init(&info->buffer, info->window_size, FIRST_DATA_SEQ,
 			info->output_file);
@@ -230,6 +243,7 @@ STATE recv_data_state(ServerInfo *info)
 
 	if (pollCall(POLL_TEN_SEC) < 0)
 	{
+		printf("server: timeout waiting for data\n");
 		return DONE;
 	}
 
@@ -239,17 +253,21 @@ STATE recv_data_state(ServerInfo *info)
 
 	if (check_packet(packet, packet_len) == 0)
 	{
+		printf("server: bad checksum packet ignored\n");
 		return RECV_DATA;
 	}
 
 	if (get_flag(packet) == FLAG_DATA)
 	{
+		printf("server: got data packet seq %u\n",
+				(unsigned int) get_seq(packet));
 		handle_data_packet(info, packet, packet_len);
 		return RECV_DATA;
 	}
 
 	if (get_flag(packet) == FLAG_EOF)
 	{
+		printf("server: got EOF packet\n");
 		handle_eof_packet(info);
 		return WAIT_ON_DONE;
 	}
@@ -270,9 +288,11 @@ STATE wait_on_done_state(ServerInfo *info)
 
 		if (info->retry_count >= MAX_TRIES)
 		{
+			printf("server: done waiting for final DONE\n");
 			return DONE;
 		}
 
+		printf("server: resend EOF ACK\n");
 		resend_last_ack(info);
 		return WAIT_ON_DONE;
 	}
@@ -288,11 +308,13 @@ STATE wait_on_done_state(ServerInfo *info)
 
 	if (get_flag(packet) == FLAG_DONE)
 	{
+		printf("server: got final DONE\n");
 		return DONE;
 	}
 
 	if (get_flag(packet) == FLAG_EOF)
 	{
+		printf("server: got EOF again\n");
 		resend_last_ack(info);
 	}
 
@@ -308,22 +330,30 @@ void handle_data_packet(ServerInfo *info, uint8_t *packet, int packet_len)
 
 	if (seq < buffer_expected(&info->buffer))
 	{
+		printf("server: duplicate data seq %u\n",
+				(unsigned int) seq);
 		send_rr(info);
 		return;
 	}
 
 	if (buffer_in_window(&info->buffer, seq) == 0)
 	{
+		printf("server: data seq %u outside window\n",
+				(unsigned int) seq);
 		send_rr(info);
 		return;
 	}
 
+	printf("server: save data seq %u len %d\n",
+			(unsigned int) seq, data_len);
 	buffer_save(&info->buffer, seq, data, data_len);
 
 	if (seq == buffer_expected(&info->buffer))
 	{
 		buffer_clear_reject(&info->buffer, seq);
 		buffer_write_ready(&info->buffer);
+		printf("server: wrote ready data, expect %u\n",
+				(unsigned int) buffer_expected(&info->buffer));
 		send_rr(info);
 
 		if (buffer_has_later(&info->buffer) == 1 &&
@@ -341,6 +371,7 @@ void handle_data_packet(ServerInfo *info, uint8_t *packet, int packet_len)
 /* This function handles EOF after all data has arrived. */
 void handle_eof_packet(ServerInfo *info)
 {
+	printf("server: send EOF ACK\n");
 	send_eof_ack(info);
 	info->retry_count = 0;
 }
@@ -357,6 +388,7 @@ void send_filename_response(ServerInfo *info, uint8_t value)
 			FLAG_FILENAME_RESP, payload, 1);
 	info->control_seq++;
 
+	printf("server: send filename response %d\n", value);
 	safeSendto(info->socket_num, packet, packet_len, 0,
 			(struct sockaddr *) &info->client,
 			sizeof(info->client));
@@ -374,6 +406,8 @@ void send_rr(ServerInfo *info)
 			FLAG_RR, payload, 4);
 	info->control_seq++;
 
+	printf("server: send RR %u\n",
+			(unsigned int) buffer_expected(&info->buffer));
 	safeSendto(info->socket_num, packet, packet_len, 0,
 			(struct sockaddr *) &info->client,
 			sizeof(info->client));
@@ -391,6 +425,7 @@ void send_reject(ServerInfo *info, uint32_t seq)
 			FLAG_SREJ, payload, 4);
 	info->control_seq++;
 
+	printf("server: send SREJ %u\n", (unsigned int) seq);
 	safeSendto(info->socket_num, packet, packet_len, 0,
 			(struct sockaddr *) &info->client,
 			sizeof(info->client));
