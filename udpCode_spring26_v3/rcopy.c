@@ -43,13 +43,14 @@ typedef struct RcopyInfo
 	int window_size;
 	int buffer_size;
 	int file_done;
+	int had_error;
 	int retry_count;
 	uint32_t control_seq;
 	struct sockaddr_in6 server;
 	Window window;
 } RcopyInfo;
 
-void process_file(char **argv);
+int process_file(char **argv);
 STATE start_state(char **argv, RcopyInfo *info);
 STATE filename_state(char **argv, RcopyInfo *info);
 STATE send_data_state(RcopyInfo *info);
@@ -72,13 +73,11 @@ int main(int argc, char *argv[])
 
 	sendtoErr_init(atof(argv[5]), DROP_ON, FLIP_ON, DEBUG_OFF, RSEED_ON);
 
-	process_file(argv);
-
-	return 0;
+	return process_file(argv);
 }
 
 /* This function runs the rcopy state machine. */
-void process_file(char **argv)
+int process_file(char **argv)
 {
 	RcopyInfo info;
 	STATE state = START_STATE;
@@ -129,6 +128,13 @@ void process_file(char **argv)
 	}
 
 	window_free(&info.window);
+
+	if (info.had_error == 1)
+	{
+		return -1;
+	}
+
+	return 0;
 }
 
 /* This function opens the file, socket, poll set, and window. */
@@ -160,6 +166,7 @@ STATE filename_state(char **argv, RcopyInfo *info)
 		return SEND_DATA;
 	}
 
+	info->had_error = 1;
 	return DONE;
 }
 
@@ -180,6 +187,7 @@ STATE send_data_state(RcopyInfo *info)
 		if (data_len < 0)
 		{
 			perror("read");
+			info->had_error = 1;
 			return DONE;
 		}
 
@@ -199,7 +207,7 @@ STATE send_data_state(RcopyInfo *info)
 
 		window_add(&info->window, send_seq, packet, packet_len);
 
-		info->retry_count = 0; // reset
+		info->retry_count = 0;
 		process_controls(info, POLL_NOW);
 	}
 
@@ -234,6 +242,8 @@ STATE wait_on_ack_state(RcopyInfo *info)
 
 	if (info->retry_count >= MAX_TRIES)
 	{
+		printf("Error: timeout waiting for RR or SREJ\n");
+		info->had_error = 1;
 		return DONE;
 	}
 
@@ -279,6 +289,8 @@ STATE send_eof_state(RcopyInfo *info)
 		tries++;
 	}
 
+	printf("Error: timeout waiting for EOF ACK\n");
+	info->had_error = 1;
 	return DONE;
 }
 
@@ -394,6 +406,7 @@ int send_filename_packet(char *out_name, RcopyInfo *info)
 		tries++;
 	}
 
+	printf("Error: timeout waiting for filename response\n");
 	return 0;
 }
 
