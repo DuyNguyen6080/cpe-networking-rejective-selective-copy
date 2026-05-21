@@ -199,7 +199,7 @@ STATE send_data_state(RcopyInfo *info)
 
 		window_add(&info->window, send_seq, packet, packet_len);
 
-		info->retry_count = 0;
+		info->retry_count = 0; // reset
 		process_controls(info, POLL_NOW);
 	}
 
