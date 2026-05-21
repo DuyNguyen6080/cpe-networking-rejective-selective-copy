@@ -73,7 +73,6 @@ int main(int argc, char *argv[])
 
 	sendtoErr_init(atof(argv[5]), DROP_ON, FLIP_ON, DEBUG_OFF, RSEED_ON);
 
-	printf("rcopy: start\n");
 	return process_file(argv);
 }
 
@@ -151,11 +150,6 @@ STATE start_state(char **argv, RcopyInfo *info)
 	info->server.sin6_port = htons(port_number);
 	info->control_seq = FIRST_SEQ;
 
-	printf("rcopy: from file %s to file %s\n", argv[1], argv[2]);
-	printf("rcopy: window %d buffer %d server %s port %d\n",
-			info->window_size, info->buffer_size, argv[6],
-			port_number);
-
 	setupPollSet();
 	addToPollSet(info->socket_num);
 
@@ -165,13 +159,10 @@ STATE start_state(char **argv, RcopyInfo *info)
 /* This function sends the output filename until the server answers. */
 STATE filename_state(char **argv, RcopyInfo *info)
 {
-	printf("rcopy: filename state\n");
-
 	if (send_filename_packet(argv[2], info) == 1)
 	{
 		window_init(&info->window, info->window_size,
 				info->control_seq);
-		printf("rcopy: filename accepted\n");
 		return SEND_DATA;
 	}
 
@@ -210,9 +201,6 @@ STATE send_data_state(RcopyInfo *info)
 		packet_len = make_packet(packet, send_seq,
 				FLAG_DATA, data, data_len);
 
-		printf("rcopy: send data seq %u len %d\n",
-				(unsigned int) send_seq, data_len);
-
 		safeSendto(info->socket_num, packet, packet_len, 0,
 				(struct sockaddr *) &info->server,
 				sizeof(info->server));
@@ -225,7 +213,6 @@ STATE send_data_state(RcopyInfo *info)
 
 	if (info->file_done == 1 && window_empty(&info->window) == 1)
 	{
-		printf("rcopy: all data acked\n");
 		return SEND_EOF;
 	}
 
@@ -241,7 +228,6 @@ STATE wait_on_ack_state(RcopyInfo *info)
 	if (got_control > 0)
 	{
 		info->retry_count = 0;
-		printf("rcopy: got control packet\n");
 		return SEND_DATA;
 	}
 
@@ -256,13 +242,12 @@ STATE wait_on_ack_state(RcopyInfo *info)
 
 	if (info->retry_count >= MAX_TRIES)
 	{
-		printf("Error: timeout waiting for RR or SREJ\n");
+		printf("rcopy failed: RR or SREJ was not received\n");
+		printf("Reason: data, RR, or SREJ packets may be lost or damaged\n");
 		info->had_error = 1;
 		return DONE;
 	}
 
-	printf("rcopy: timeout resend seq %u\n",
-			(unsigned int) entry->seq);
 	resend_packet(info, entry);
 	return WAIT_ON_ACK;
 }
@@ -280,11 +265,8 @@ STATE send_eof_state(RcopyInfo *info)
 	packet_len = make_packet(packet, info->window.current,
 			FLAG_EOF, NULL, 0);
 
-	printf("rcopy: EOF state\n");
-
 	while (tries < MAX_TRIES)
 	{
-		printf("rcopy: send EOF try %d\n", tries + 1);
 		safeSendto(info->socket_num, packet, packet_len, 0,
 				(struct sockaddr *) &info->server,
 				sizeof(info->server));
@@ -300,7 +282,6 @@ STATE send_eof_state(RcopyInfo *info)
 			if (check_packet(in_packet, in_len) == 1 &&
 					get_flag(in_packet) == FLAG_EOF_ACK)
 			{
-				printf("rcopy: got EOF ACK\n");
 				send_final_done(info);
 				return DONE;
 			}
@@ -309,7 +290,8 @@ STATE send_eof_state(RcopyInfo *info)
 		tries++;
 	}
 
-	printf("Error: timeout waiting for EOF ACK\n");
+	printf("rcopy failed: EOF ACK was not received\n");
+	printf("Reason: EOF packet or EOF ACK may be lost or damaged\n");
 	info->had_error = 1;
 	return DONE;
 }
@@ -395,7 +377,6 @@ int send_filename_packet(char *out_name, RcopyInfo *info)
 
 	while (tries < MAX_TRIES)
 	{
-		printf("rcopy: send filename try %d\n", tries + 1);
 		safeSendto(info->socket_num, packet, packet_len, 0,
 				(struct sockaddr *) &info->server,
 				sizeof(info->server));
@@ -419,7 +400,6 @@ int send_filename_packet(char *out_name, RcopyInfo *info)
 					return 0;
 				}
 
-				printf("rcopy: got filename response\n");
 				info->control_seq++;
 				return 1;
 			}
@@ -428,7 +408,8 @@ int send_filename_packet(char *out_name, RcopyInfo *info)
 		tries++;
 	}
 
-	printf("Error: timeout waiting for filename response\n");
+	printf("rcopy failed: filename response was not received\n");
+	printf("Reason: filename packet or filename response may be lost or damaged\n");
 	return 0;
 }
 
@@ -453,13 +434,11 @@ int process_controls(RcopyInfo *info, int wait_time)
 		{
 			if (get_flag(packet) == FLAG_RR)
 			{
-				printf("rcopy: got RR packet\n");
 				handle_rr(info, packet, packet_len);
 				count++;
 			}
 			else if (get_flag(packet) == FLAG_SREJ)
 			{
-				printf("rcopy: got SREJ packet\n");
 				handle_reject(info, packet, packet_len);
 				count++;
 			}
@@ -482,7 +461,6 @@ void handle_rr(RcopyInfo *info, uint8_t *packet, int packet_len)
 	}
 
 	rr_seq = read_u32(packet + SREJ_HEADER_LEN);
-	printf("rcopy: RR asks for seq %u\n", (unsigned int) rr_seq);
 	window_rr(&info->window, rr_seq);
 }
 
@@ -498,24 +476,17 @@ void handle_reject(RcopyInfo *info, uint8_t *packet, int packet_len)
 	}
 
 	missing_seq = read_u32(packet + SREJ_HEADER_LEN);
-	printf("rcopy: SREJ asks for seq %u\n",
-			(unsigned int) missing_seq);
 	entry = window_find(&info->window, missing_seq);
 
 	if (entry != NULL)
 	{
 		resend_packet(info, entry);
 	}
-	else
-	{
-		printf("rcopy: SREJ packet not in window\n");
-	}
 }
 
 /* This function resends one packet from the sender window. */
 void resend_packet(RcopyInfo *info, WindowEntry *entry)
 {
-	printf("rcopy: resend seq %u\n", (unsigned int) entry->seq);
 	safeSendto(info->socket_num, entry->packet, entry->packet_len, 0,
 			(struct sockaddr *) &info->server,
 			sizeof(info->server));
@@ -530,7 +501,6 @@ void send_final_done(RcopyInfo *info)
 	packet_len = make_packet(packet, info->window.current + 1,
 			FLAG_DONE, NULL, 0);
 
-	printf("rcopy: send final DONE\n");
 	safeSendto(info->socket_num, packet, packet_len, 0,
 			(struct sockaddr *) &info->server,
 			sizeof(info->server));
